@@ -88,14 +88,42 @@ Extract the operation and page ID from `$ARGUMENTS`:
 ### 2. Ensure Environment
 
 ```bash
-echo $CONFLUENCE_EMAIL
+source ~/.bashrc 2>/dev/null; echo "EMAIL=${CONFLUENCE_EMAIL:-unset} TOKEN=${CONFLUENCE_API_TOKEN:+set}"
 ```
 
-If empty, try `source ~/.bashrc` and re-check. If still empty, ask the user to provide credentials.
+If either variable is `unset`, run the setup flow below. If both are set, skip to step 3.
+
+#### Setup Flow (first-time only)
+
+1. Ask the user for the missing values using `AskUserQuestion`:
+   - `CONFLUENCE_EMAIL`: "What is your Atlassian account email?"
+   - `CONFLUENCE_API_TOKEN`: "Enter your Confluence API token (generate at https://id.atlassian.com/manage-profile/security/api-tokens)"
+
+2. Persist to `~/.bashrc` so future sessions pick them up automatically:
+   ```bash
+   # Remove any existing confluence env lines to avoid duplicates
+   sed -i '/^export CONFLUENCE_EMAIL=/d' ~/.bashrc
+   sed -i '/^export CONFLUENCE_API_TOKEN=/d' ~/.bashrc
+   # Append new values
+   echo 'export CONFLUENCE_EMAIL="<user-provided-email>"' >> ~/.bashrc
+   echo 'export CONFLUENCE_API_TOKEN="<user-provided-token>"' >> ~/.bashrc
+   ```
+
+3. Source to activate in the current session:
+   ```bash
+   source ~/.bashrc
+   ```
+
+4. Confirm registration succeeded:
+   ```
+   "Confluence credentials saved to ~/.bashrc. They will be available in all future sessions."
+   ```
+
+#### Using credentials
 
 Always export env vars in the same command chain as the script — shell state does not persist between Bash calls:
 ```bash
-export CONFLUENCE_EMAIL="..." CONFLUENCE_API_TOKEN="..." && $CONFLUENCE_CMD ...
+source ~/.bashrc && $CONFLUENCE_CMD ...
 ```
 
 ### 3. Execute Operation
