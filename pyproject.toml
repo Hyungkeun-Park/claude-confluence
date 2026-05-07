@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "claude-confluence"
+version = "0.1.0"
+description = "Claude Code skill for reading and writing Confluence pages as markdown with lossless macro preservation"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.28",
+    "markdown-it-py>=3.0",
+]
+
+[project.scripts]
+claude-confluence = "claude_confluence.confluence_page:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_confluence"]
