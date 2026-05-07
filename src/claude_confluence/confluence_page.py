@@ -277,13 +277,101 @@ def _escape_bare_brackets_segment(segment: str) -> str:
     )
 
 
+def _image_placeholders_to_ac(html: str) -> str:
+    """Convert image placeholders and <img> tags back to ac:image elements."""
+    IMAGE_PLACEHOLDER = re.compile(
+        r"<!--\s*confluence:image((?:\s+[\w-]+=\"[^\"]*\")*)\s*-->\s*"
+        r"(?:<p>\s*)?<img\s+src=\"([^\"]*)\"[^/]*/>\s*(?:</p>\s*)?"
+        r"<!--\s*/confluence:image\s*-->",
+        re.DOTALL,
+    )
+
+    def _replace(m: re.Match) -> str:
+        attrs_str = m.group(1)
+        filename = m.group(2)
+        attrs = dict(MACRO_PARAM_KV.findall(attrs_str))
+        attr_xml = "".join(f' ac:{k}="{v}"' for k, v in attrs.items())
+        return f'<ac:image{attr_xml}><ri:attachment ri:filename="{filename}" /></ac:image>'
+
+    html = IMAGE_PLACEHOLDER.sub(_replace, html)
+
+    def _replace_external(m: re.Match) -> str:
+        src = m.group(1)
+        alt = m.group(2) or ""
+        if src.startswith("http"):
+            return f'<ac:image ac:alt="{alt}"><ri:url ri:value="{src}" /></ac:image>'
+        return m.group(0)
+
+    html = re.sub(r'<p>\s*<img\s+src="([^"]*)"(?:\s+alt="([^"]*)")?\s*/>\s*</p>', _replace_external, html)
+    return html
+
+
+def _emoticon_placeholders_to_ac(html: str) -> str:
+    """Convert <!-- confluence:emoticon name="smile" --> back to ac:emoticon."""
+
+    def _replace(m: re.Match) -> str:
+        name = m.group(1)
+        return f'<ac:emoticon ac:name="{name}" />'
+
+    return re.sub(r'<!--\s*confluence:emoticon\s+name="([^"]*)"\s*-->', _replace, html)
+
+
+def _mention_placeholders_to_ac(html: str) -> str:
+    """Convert <!-- confluence:mention ... --> back to ac:link with ri:user."""
+
+    def _replace(m: re.Match) -> str:
+        attrs_str = m.group(1)
+        attrs = dict(MACRO_PARAM_KV.findall(attrs_str))
+        if "account-id" in attrs:
+            return f'<ac:link><ri:user ri:account-id="{attrs["account-id"]}" /></ac:link>'
+        elif "username" in attrs:
+            return f'<ac:link><ri:user ri:username="{attrs["username"]}" /></ac:link>'
+        elif "userkey" in attrs:
+            return f'<ac:link><ri:user ri:userkey="{attrs["userkey"]}" /></ac:link>'
+        return ""
+
+    return re.sub(
+        r"<!--\s*confluence:mention((?:\s+[\w-]+=\"[^\"]*\")*)\s*-->",
+        _replace,
+        html,
+    )
+
+
+def _task_list_placeholders_to_ac(html: str) -> str:
+    """Convert markdown checkboxes (rendered as <li>[x] text</li>) back to ac:task-list."""
+    CHECKBOX_LIST = re.compile(
+        r"<ul>\s*((?:<li>\s*\[[ x]\].*?</li>\s*)+)</ul>",
+        re.DOTALL,
+    )
+
+    def _replace_list(m: re.Match) -> str:
+        items_html = m.group(1)
+        tasks: list[str] = []
+        for item_m in re.finditer(r"<li>\s*\[( |x)\]\s*(.*?)</li>", items_html, re.DOTALL):
+            status = "complete" if item_m.group(1) == "x" else "incomplete"
+            body = item_m.group(2).strip()
+            tasks.append(
+                f"<ac:task><ac:task-status>{status}</ac:task-status>"
+                f"<ac:task-body>{body}</ac:task-body></ac:task>"
+            )
+        if not tasks:
+            return m.group(0)
+        return "<ac:task-list>" + "".join(tasks) + "</ac:task-list>"
+
+    return CHECKBOX_LIST.sub(_replace_list, html)
+
+
 def markdown_to_storage(markdown_text: str) -> str:
     """Convert markdown with optional macro placeholders to Confluence storage format."""
     md = MarkdownIt("commonmark", {"html": True})
     md.enable("table")
     html = md.render(markdown_text)
     html = _code_blocks_to_ac_macro(html)
+    html = _task_list_placeholders_to_ac(html)
     html = _escape_bare_brackets(html)
+    html = _image_placeholders_to_ac(html)
+    html = _emoticon_placeholders_to_ac(html)
+    html = _mention_placeholders_to_ac(html)
     html = _macro_placeholders_to_ac(html)
     html = re.sub(r"</?(?:thead|tbody)>\n?", "", html)
     return html
@@ -413,6 +501,89 @@ def _convert_single_macro(name: str, inner: str) -> str:
     return f"<!-- confluence:{name}{param_str} -->"
 
 
+def _convert_images(storage_html: str) -> str:
+    """Convert <ac:image> elements to markdown images or placeholders."""
+
+    def _replace_image(m: re.Match) -> str:
+        tag = m.group(0)
+        attrs: dict[str, str] = {}
+        for attr_m in re.finditer(r'(ac:[\w-]+)="([^"]*)"', tag):
+            key = attr_m.group(1).replace("ac:", "")
+            attrs[key] = attr_m.group(2)
+        attachment = re.search(r'ri:filename="([^"]*)"', tag)
+        url = re.search(r'ri:value="([^"]*)"', tag)
+        if attachment:
+            filename = attachment.group(1)
+            alt = attrs.get("alt", filename)
+            attr_str = "".join(f' {k}="{v}"' for k, v in attrs.items())
+            return f"<!-- confluence:image{attr_str} -->\n![{alt}]({filename})\n<!-- /confluence:image -->"
+        elif url:
+            src = url.group(1)
+            alt = attrs.get("alt", "")
+            return f"![{alt}]({src})"
+        return ""
+
+    return re.sub(r"<ac:image[^>]*>.*?</ac:image>", _replace_image, storage_html, flags=re.DOTALL)
+
+
+def _convert_emoticons(storage_html: str) -> str:
+    """Convert <ac:emoticon> elements to placeholders."""
+
+    def _replace_emoticon(m: re.Match) -> str:
+        name_m = re.search(r'ac:name="([^"]*)"', m.group(0))
+        if name_m:
+            return f'<!-- confluence:emoticon name="{name_m.group(1)}" -->'
+        return ""
+
+    return re.sub(r"<ac:emoticon[^/]*/\s*>", _replace_emoticon, storage_html)
+
+
+def _convert_mentions(storage_html: str) -> str:
+    """Convert <ac:link><ri:user .../></ac:link> elements to placeholders."""
+
+    def _replace_mention(m: re.Match) -> str:
+        tag = m.group(0)
+        account_id = re.search(r'ri:account-id="([^"]*)"', tag)
+        username = re.search(r'ri:username="([^"]*)"', tag)
+        userkey = re.search(r'ri:userkey="([^"]*)"', tag)
+        if account_id:
+            return f'<!-- confluence:mention account-id="{account_id.group(1)}" -->'
+        elif username:
+            return f'<!-- confluence:mention username="{username.group(1)}" -->'
+        elif userkey:
+            return f'<!-- confluence:mention userkey="{userkey.group(1)}" -->'
+        return ""
+
+    return re.sub(
+        r"<ac:link>\s*<ri:user[^/]*/>\s*(?:<ac:link-body>.*?</ac:link-body>\s*)?</ac:link>",
+        _replace_mention,
+        storage_html,
+        flags=re.DOTALL,
+    )
+
+
+def _convert_task_lists(storage_html: str) -> str:
+    """Convert <ac:task-list> elements to markdown checkboxes."""
+
+    def _replace_task_list(m: re.Match) -> str:
+        task_list_html = m.group(0)
+        tasks = re.findall(r"<ac:task>(.*?)</ac:task>", task_list_html, re.DOTALL)
+        lines: list[str] = []
+        for task_html in tasks:
+            status_m = re.search(r"<ac:task-status>(.*?)</ac:task-status>", task_html)
+            body_m = re.search(r"<ac:task-body>(.*?)</ac:task-body>", task_html, re.DOTALL)
+            checked = status_m and status_m.group(1).strip() == "complete"
+            body = ""
+            if body_m:
+                body = _inline_markup(body_m.group(1))
+                body = re.sub(r"<[^>]+>", "", body).strip()
+            checkbox = "[x]" if checked else "[ ]"
+            lines.append(f"- {checkbox} {body}")
+        return "\n" + "\n".join(lines) + "\n"
+
+    return re.sub(r"<ac:task-list>.*?</ac:task-list>", _replace_task_list, storage_html, flags=re.DOTALL)
+
+
 def _ac_macro_to_placeholder(storage_html: str) -> str:
     """Convert <ac:structured-macro> elements to <!-- confluence:xxx --> placeholders."""
     while True:
@@ -515,16 +686,22 @@ def storage_to_markdown(storage_html: str) -> str:
     """Convert Confluence storage format to markdown with macro placeholders."""
     text = storage_html
 
-    # 1. Code macros -> fenced blocks (before any other processing)
+    # 1. Images, emoticons, mentions, task lists (before macro processing)
+    text = _convert_images(text)
+    text = _convert_emoticons(text)
+    text = _convert_mentions(text)
+    text = _convert_task_lists(text)
+
+    # 2. Code macros -> fenced blocks
     text = _ac_macro_to_placeholder(text)
 
-    # 2. Tables -> markdown tables
+    # 3. Tables -> markdown tables
     text = _convert_tables(text)
 
-    # 3. Lists -> markdown lists
+    # 4. Lists -> markdown lists
     text = _convert_lists(text)
 
-    # 4. Block-level elements
+    # 5. Block-level elements
     text = re.sub(
         r"<h([1-6])[^>]*>(.*?)</h\1>",
         lambda m: f"\n{'#' * int(m.group(1))} {_inline_markup(m.group(2))}\n",
@@ -541,13 +718,13 @@ def storage_to_markdown(storage_html: str) -> str:
     )
     text = re.sub(r"<hr\s*/?>", "\n---\n", text)
 
-    # 5. Paragraphs
+    # 6. Paragraphs
     text = re.sub(r"<p[^>]*>(.*?)</p>", lambda m: _inline_markup(m.group(1)) + "\n\n", text, flags=re.DOTALL)
 
-    # 6. Inline formatting for any remaining content
+    # 7. Inline formatting for any remaining content
     text = _inline_markup(text)
 
-    # 7. Protect code blocks and macro placeholders, then strip remaining HTML tags
+    # 8. Protect code blocks and macro placeholders, then strip remaining HTML tags
     protected_blocks: list[str] = []
 
     def _save_block(m: re.Match) -> str:
@@ -600,10 +777,10 @@ def storage_to_markdown(storage_html: str) -> str:
     for i in range(len(protected_blocks) - 1, -1, -1):
         text = text.replace(f"__PROTECTED_{i}__", protected_blocks[i])
 
-    # 8. Decode HTML entities
+    # 9. Decode HTML entities
     text = html_mod.unescape(text)
 
-    # 9. Normalize em-dash table separators to standard markdown hyphens
+    # 10. Normalize em-dash table separators to standard markdown hyphens
     def _fix_separator_row(m: re.Match) -> str:
         return re.sub(r"—", "---", m.group(0))
 
@@ -614,7 +791,7 @@ def storage_to_markdown(storage_html: str) -> str:
         flags=re.MULTILINE,
     )
 
-    # 10. Clean up whitespace
+    # 11. Clean up whitespace
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = text.strip() + "\n"
     return text
