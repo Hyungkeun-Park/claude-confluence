@@ -277,6 +277,22 @@ def _escape_bare_brackets_segment(segment: str) -> str:
     )
 
 
+def _color_placeholders_to_ac(html: str) -> str:
+    """Convert <!-- confluence:color --> placeholders back to <span style="...">."""
+
+    def _replace(m: re.Match) -> str:
+        style = m.group(1)
+        content = m.group(2)
+        return f'<span style="{style}">{content}</span>'
+
+    return re.sub(
+        r'<!--\s*confluence:color\s+style="([^"]*)"\s*-->(.*?)<!--\s*/confluence:color\s*-->',
+        _replace,
+        html,
+        flags=re.DOTALL,
+    )
+
+
 def _image_placeholders_to_ac(html: str) -> str:
     """Convert image placeholders and <img> tags back to ac:image elements."""
     IMAGE_PLACEHOLDER = re.compile(
@@ -369,6 +385,7 @@ def markdown_to_storage(markdown_text: str) -> str:
     html = _code_blocks_to_ac_macro(html)
     html = _task_list_placeholders_to_ac(html)
     html = _escape_bare_brackets(html)
+    html = _color_placeholders_to_ac(html)
     html = _image_placeholders_to_ac(html)
     html = _emoticon_placeholders_to_ac(html)
     html = _mention_placeholders_to_ac(html)
@@ -499,6 +516,22 @@ def _convert_single_macro(name: str, inner: str) -> str:
         return f"<!-- confluence:{name}{param_str} -->\n{rich_body.strip()}\n<!-- /confluence:{name} -->"
 
     return f"<!-- confluence:{name}{param_str} -->"
+
+
+def _convert_colors(storage_html: str) -> str:
+    """Convert <span style="color: ..."> elements to placeholders."""
+
+    def _replace_color(m: re.Match) -> str:
+        style = m.group(1)
+        content = m.group(2)
+        return f'<!-- confluence:color style="{style}" -->{content}<!-- /confluence:color -->'
+
+    return re.sub(
+        r'<span\s+style="(color:\s*[^"]*)">(.*?)</span>',
+        _replace_color,
+        storage_html,
+        flags=re.DOTALL,
+    )
 
 
 def _convert_images(storage_html: str) -> str:
@@ -687,6 +720,7 @@ def storage_to_markdown(storage_html: str) -> str:
     text = storage_html
 
     # 1. Images, emoticons, mentions, task lists (before macro processing)
+    text = _convert_colors(text)
     text = _convert_images(text)
     text = _convert_emoticons(text)
     text = _convert_mentions(text)
