@@ -221,6 +221,111 @@ toc, expand (including nested), panel, info, note, warning, tip, code, status, c
 | `detailssummary` (Page Properties Report) crashes renderer | Confluence cannot render this macro when inserted via API |
 | Trailing blank lines around placeholders may be removed | Whitespace normalization on read |
 
+## Editing Patterns
+
+When a user asks to add or modify Confluence macros in a markdown file, use the placeholder syntax directly. The placeholders are converted to real Confluence macros on write.
+
+### Adding a Table of Contents
+
+User: "Add a TOC at the top of the page"
+
+Insert at the desired location:
+```markdown
+<!-- confluence:toc maxLevel="3" -->
+```
+
+### Wrapping content in an Expand (collapsible section)
+
+User: "Wrap the details section in a collapsible block"
+
+Before:
+```markdown
+## Details
+Long content here...
+```
+
+After:
+```markdown
+<!-- confluence:expand title="Details" -->
+## Details
+Long content here...
+<!-- /confluence:expand -->
+```
+
+### Adding an info/warning/note/tip panel
+
+User: "Add a warning box about the deadline"
+
+```markdown
+<!-- confluence:warning title="Deadline" -->
+This must be completed by Friday.
+<!-- /confluence:warning -->
+```
+
+### Adding a status lozenge
+
+User: "Mark this as done"
+
+```markdown
+<!-- confluence:status title="DONE" colour="Green" -->
+```
+
+Available colours: `Green`, `Yellow`, `Red`, `Blue`, `Grey`.
+
+### Inserting a two-column layout
+
+User: "Split this into two columns"
+
+```markdown
+<!-- confluence:section -->
+<!-- confluence:column width="50%" -->
+Left column content.
+<!-- /confluence:column -->
+<!-- confluence:column width="50%" -->
+Right column content.
+<!-- /confluence:column -->
+<!-- /confluence:section -->
+```
+
+### Adding a task list (checkboxes)
+
+User: "Add a checklist for the review steps"
+
+```markdown
+- [ ] Code review completed
+- [ ] Tests passing
+- [x] Documentation updated
+```
+
+### Adding colored text
+
+User: "Make this text red"
+
+```markdown
+<!-- confluence:color style="color: rgb(255,0,0)" -->Important text<!-- /confluence:color -->
+```
+
+### Inserting a mention
+
+User: "Mention the assignee"
+
+```markdown
+<!-- confluence:mention account-id="123456:abcdef" -->
+```
+
+### Nesting macros
+
+Placeholders can be nested. For example, an expand inside another expand:
+
+```markdown
+<!-- confluence:expand title="Overview" -->
+Summary content.
+<!-- confluence:expand title="Technical Details" -->
+Detailed technical content.
+<!-- /confluence:expand -->
+<!-- /confluence:expand -->
+```
+
 ## Error Handling
 
 | Symptom | Likely cause | Fix |
